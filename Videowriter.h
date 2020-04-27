@@ -9,6 +9,7 @@
 #include <mutex>
 #include <thread>
 #include <condition_variable>
+#include <atomic>
 
 // Forward declarations
 //----------------------------------------------------------------------------------------------------------------------
@@ -79,11 +80,9 @@ private:
     //-Private data--------------------------------------------------
 
     std::string filePath;
-
     cv::Mat frame;
 
     std::unique_ptr<VideoProperties> properties;
-
     std::unique_ptr<cv::VideoWriter> video;
 
     int codec{0};
@@ -94,11 +93,10 @@ private:
     mutable std::mutex recordFinishedMutex;
 
     std::thread thread;
-
     std::condition_variable condition;
 
-    bool doRecord{true};
-
+    std::atomic<bool> doRecord{true};
+    std::atomic<bool> writeFrame{false};
     bool recordFinished{false};
 };
 

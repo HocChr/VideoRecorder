@@ -42,32 +42,24 @@ bool VideoWriter::isStateValid()
 {
     auto videoDefault = make_unique<cv::VideoWriter>(filePath, codec, 20, cv::Size(100, 100), true);
 
-    if (videoDefault->isOpened())
-    {
-        return true;
-    }
-    return false;
+    return videoDefault->isOpened() ? true : false;
 }
 
 void VideoWriter::write()
 {
     if (!video || !properties || properties->FRAME_RATE == 0)
+    {
         return;
+    }
 
-    int sleepTime = (1000 / properties->FRAME_RATE);
-
-    auto begin = std::chrono::steady_clock::now();
+    std::unique_lock<std::mutex> recMutex(recordFinishedMutex); // #2 look at the end of file
 
     while (doRecord)
     {
-        std::unique_lock<std::mutex> recMutex(recordFinishedMutex);
-
-        auto now = std::chrono::steady_clock::now();
-
-        if (chrono::duration_cast<chrono::milliseconds>(now - begin).count() >= sleepTime)
+        if(writeFrame)
         {
-            std::unique_lock<std::mutex> lk(writeFrameMutex);
-            begin = std::chrono::steady_clock::now();
+            std::lock_guard<std::mutex> lockguard(writeFrameMutex); // #1 look at the end of file
+            writeFrame = false;
             if (video->isOpened())
             {
                 video->write(frame);
@@ -81,23 +73,22 @@ void VideoWriter::write()
 
 void VideoWriter::initAndStartRecording()
 {
-    video = make_unique<cv::VideoWriter>(filePath, codec, properties->FRAME_RATE,
-                                         cv::Size(properties->WIDTH, properties->HEIGHT), true);
-    thread         = std::thread(&VideoWriter::write, this);
-    recordFinished = false;
+  video = make_unique<cv::VideoWriter>(
+      filePath, codec, properties->FRAME_RATE,
+      cv::Size(properties->WIDTH, properties->HEIGHT), true);
+  thread = std::thread(&VideoWriter::write, this);
+  recordFinished = false;
 }
 
 void VideoWriter::setFrame(const cv::Mat frameArg)
 {
-    std::lock_guard<std::mutex> l(writeFrameMutex);
+    std::lock_guard<std::mutex> lockguard(writeFrameMutex); // #1 look at the end of file
 
     cv::cvtColor(frameArg, frame, cv::COLOR_BGR2RGB);
+    writeFrame = true;
 
-    if (!properties)
-    {
-        return;
-    }
-    if (!video)
+    bool success = properties != nullptr ? true : false;
+    if (success && video == nullptr)
     {
         initAndStartRecording();
     }
@@ -122,8 +113,8 @@ VideoWriter::~VideoWriter()
 
     doRecord = false;
 
-    std::unique_lock<std::mutex> lk(recordFinishedMutex);
-    condition.wait(lk, [this] { return recordFinished; });
+    std::unique_lock<std::mutex> lockguard(recordFinishedMutex); // #2 look at the end of file
+    condition.wait(lockguard, [this] { return recordFinished; });
 
     video->release();
 
@@ -133,3 +124,6 @@ VideoWriter::~VideoWriter()
     }
     cv::destroyAllWindows();
 }
+
+// #1 use std::lock_guard<> if neither functionality for de-locking nor functionality for waiting is needed
+// #2 use std::unique_lock<> because the wait-functionality is required
